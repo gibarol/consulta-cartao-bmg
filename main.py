@@ -1,57 +1,40 @@
 from flask import Flask, request, jsonify
+from zeep import Client
+from zeep.transports import Transport
 import requests
 
 app = Flask(__name__)
 
+# Dados fixos
+LOGIN = "robo.56780"
+SENHA = "Sucesso1@@@"
+COD_ENTIDADE = "1581"  # INSS
+WSDL = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar?wsdl"
+
+# Transport SOAP
+session = requests.Session()
+transport = Transport(session=session)
+client = Client(wsdl=WSDL, transport=transport)
+
 @app.route("/")
 def home():
-    return "🟢 API BMG Online via Render – SOAP liberado"
+    return "🟢 API SOAP BMG ativa e rodando via IP fixo Render"
 
 @app.route("/consulta", methods=["POST"])
-def consulta_cartao():
+def consulta():
+    cpf = request.json.get("cpf")
+    if not cpf:
+        return jsonify({"erro": "CPF não informado"}), 400
+
     try:
-        cpf = request.json.get("cpf")
-
-        if not cpf:
-            return jsonify({"erro": "CPF não informado"}), 400
-
-        login = "robo.56780"
-        senha = "Sucesso1@@@"
-        entidade = "1581"
-
-        # XML SOAP para buscar cartões
-        xml_cartao = f"""
-        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
-          <soapenv:Header/>
-          <soapenv:Body>
-            <web:buscarCartoesDisponiveis>
-              <param>
-                <login>{login}</login>
-                <senha>{senha}</senha>
-                <codigoEntidade>{entidade}</codigoEntidade>
-                <cpf>{cpf}</cpf>
-              </param>
-            </web:buscarCartoesDisponiveis>
-          </soapenv:Body>
-        </soapenv:Envelope>
-        """
-
-        headers = {
-            "Content-Type": "text/xml; charset=utf-8",
-            "SOAPAction": ""
-        }
-
-        url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar?wsdl"
-
-        r1 = requests.post(url, data=xml_cartao.strip(), headers=headers)
-        resposta = r1.text
-
-        return jsonify({
+        result = client.service.buscarCartoesDisponiveis({
+            "login": LOGIN,
+            "senha": SENHA,
+            "codigoEntidade": COD_ENTIDADE,
             "cpf": cpf,
-            "status_code": r1.status_code,
-            "resposta": resposta
+            "sequencialOrgao": ""
         })
-
+        return jsonify({"resultado": str(result)})
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
