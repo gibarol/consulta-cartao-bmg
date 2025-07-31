@@ -33,12 +33,12 @@ def consulta():
 
         # Parâmetros de autenticação (substituir se necessário)
         parametros = {
-            "login": "97781",
-            "senha": "kvdfyeau6nvzjk1bkhx3",
-            "loginConsig": "97781",
+            "login": "robo.56780",
+            "senha": "Sucesso1@@@",
+            "loginConsig": "robo.56780",
             "codigoEntidade": "4277",
             "cpf": cpf,
-            "senhaConsig": "kvdfyeau6nvzjk1bkhx3",
+            "senhaConsig": "Sucesso1@@@",
             "sequencialOrgao": 1
         }
 
