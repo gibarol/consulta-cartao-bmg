@@ -1,26 +1,24 @@
+from flask import Flask, request, jsonify
 import requests
 
-def consultar_bmg(cpf):
-    url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar?wsdl"
-    headers = {
-        "Content-Type": "text/xml;charset=UTF-8",
-        "SOAPAction": "",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36",
-        "Accept-Encoding": "gzip, deflate",
-        "Connection": "keep-alive",
-        "Referer": "https://bmgconsig.com.br",
-        "Host": "ws1.bmgconsig.com.br"
-    }
+app = Flask(__name__)
 
-    body = f"""<?xml version="1.0" encoding="UTF-8"?>
+# Configurações fixas do BMG
+WSDL_URL = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar?wsdl"
+LOGIN = "robo.56780"
+SENHA = "Miguel1@@@"
+ENTIDADE = "1581"
+
+def montar_soap_request(cpf):
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
   <soapenv:Header/>
   <soapenv:Body>
     <web:buscarCartoesDisponiveis>
       <param>
-        <login>robo.56780</login>
-        <senha>Miguel1@@@</senha>
-        <codigoEntidade>1581</codigoEntidade>
+        <login>{LOGIN}</login>
+        <senha>{SENHA}</senha>
+        <codigoEntidade>{ENTIDADE}</codigoEntidade>
         <cpf>{cpf}</cpf>
         <sequencialOrgao></sequencialOrgao>
       </param>
@@ -28,11 +26,41 @@ def consultar_bmg(cpf):
   </soapenv:Body>
 </soapenv:Envelope>"""
 
+@app.route("/consulta", methods=["GET"])
+def consulta_cpf():
+    cpf = request.args.get("cpf")
+    if not cpf:
+        return jsonify({"erro": "CPF não informado"}), 400
+
+    headers = {
+        "Content-Type": "text/xml; charset=utf-8",
+        "SOAPAction": ""
+    }
+
+    soap_body = montar_soap_request(cpf)
+
     try:
-        response = requests.post(url, data=body, headers=headers, timeout=20)
-        return {
-            "status_code": response.status_code,
-            "content": response.text
-        }
-    except requests.exceptions.RequestException as e:
-        return {"erro": str(e)}
+        response = requests.post(WSDL_URL, data=soap_body, headers=headers, timeout=30)
+
+        if response.status_code == 200:
+            return jsonify({
+                "cpf": cpf,
+                "status_code": response.status_code,
+                "resposta": response.text
+            })
+        else:
+            return jsonify({
+                "cpf": cpf,
+                "status_code": response.status_code,
+                "erro": f"Erro HTTP {response.status_code}",
+                "resposta": response.text
+            })
+
+    except Exception as e:
+        return jsonify({
+            "cpf": cpf,
+            "erro": str(e)
+        }), 500
+
+if __name__ == "__main__":
+    app.run(debug=True)
