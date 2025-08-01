@@ -1,66 +1,46 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, Response
 import requests
 
 app = Flask(__name__)
 
-# Configurações fixas do BMG
-WSDL_URL = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar?wsdl"
-LOGIN = "robo.56780"
-SENHA = "Miguel1@@@"
-ENTIDADE = "1581"
+@app.route('/')
+def home():
+    return 'API Consulta CPF BMG Online!'
 
-def montar_soap_request(cpf):
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <web:buscarCartoesDisponiveis>
-      <param>
-        <login>{LOGIN}</login>
-        <senha>{SENHA}</senha>
-        <codigoEntidade>{ENTIDADE}</codigoEntidade>
-        <cpf>{cpf}</cpf>
-        <sequencialOrgao></sequencialOrgao>
-      </param>
-    </web:buscarCartoesDisponiveis>
-  </soapenv:Body>
-</soapenv:Envelope>"""
-
-@app.route("/consulta", methods=["GET"])
+@app.route('/consulta', methods=['GET'])
 def consulta_cpf():
-    cpf = request.args.get("cpf")
+    cpf = request.args.get('cpf')
     if not cpf:
-        return jsonify({"erro": "CPF não informado"}), 400
+        return Response("Erro: CPF não informado", status=400)
 
+    url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar"
     headers = {
-        "Content-Type": "text/xml; charset=utf-8",
-        "SOAPAction": ""
+        "Content-Type": "text/xml;charset=UTF-8",
+        "SOAPAction": "buscarCartoesDisponiveis"
     }
 
-    soap_body = montar_soap_request(cpf)
+    body = f"""
+    <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
+      <soapenv:Header/>
+      <soapenv:Body>
+        <web:buscarCartoesDisponiveis>
+          <param>
+            <login>robo.56780</login>
+            <senha>Miguel1@@@</senha>
+            <codigoEntidade>1581</codigoEntidade>
+            <cpf>{cpf}</cpf>
+            <sequencialOrgao></sequencialOrgao>
+          </param>
+        </web:buscarCartoesDisponiveis>
+      </soapenv:Body>
+    </soapenv:Envelope>
+    """
 
     try:
-        response = requests.post(WSDL_URL, data=soap_body, headers=headers, timeout=30)
-
-        if response.status_code == 200:
-            return jsonify({
-                "cpf": cpf,
-                "status_code": response.status_code,
-                "resposta": response.text
-            })
-        else:
-            return jsonify({
-                "cpf": cpf,
-                "status_code": response.status_code,
-                "erro": f"Erro HTTP {response.status_code}",
-                "resposta": response.text
-            })
-
+        response = requests.post(url, data=body.strip().encode('utf-8'), headers=headers, timeout=30)
+        return Response(response.text, status=response.status_code, mimetype='text/xml')
     except Exception as e:
-        return jsonify({
-            "cpf": cpf,
-            "erro": str(e)
-        }), 500
+        return Response(f"Erro interno: {str(e)}", status=500)
 
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run()
