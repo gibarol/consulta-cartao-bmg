@@ -1,32 +1,57 @@
-from flask import Flask, request, jsonify
+
+from flask import Flask, request, jsonify, send_file, render_template_string
 import requests
 import datetime
-import os
 import pandas as pd
+import os
 
 app = Flask(__name__)
 
-@app.route('/consulta', methods=['POST'])
-def consultar_bmg_planilha():
-    if 'file' not in request.files:
-        return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
+UPLOAD_FOLDER = '/mnt/data/uploads'
+RESULT_FILE = '/mnt/data/retorno_bmg.xlsx'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'erro': 'Nome de arquivo inválido'}), 400
+HTML_FORM = '''
+<!doctype html>
+<title>Consulta Cartão BMG</title>
+<h2>Enviar planilha com CPF</h2>
+<form method=post enctype=multipart/form-data action="/consulta">
+  <input type=file name=file>
+  <input type=submit value=Enviar>
+</form>
+{% if download %}
+  <a href="/download">Baixar resultado</a>
+{% endif %}
+'''
 
-    try:
-        df = pd.read_excel(file)
-        resultados = []
+@app.route("/", methods=["GET"])
+def index():
+    return render_template_string(HTML_FORM, download=False)
 
-        for index, row in df.iterrows():
-            cpf = str(row['CPF']).strip()
+@app.route("/consulta", methods=["POST"])
+def consulta():
+    file = request.files.get("file")
+    if not file:
+        return "Nenhum arquivo enviado", 400
 
-            login = 'robo.56780'
-            senha = 'Miguel1@@@'
-            codigo_entidade = '1581'
+    file_path = os.path.join(UPLOAD_FOLDER, "entrada.xlsx")
+    file.save(file_path)
 
-            xml_envio = f"""<?xml version="1.0" encoding="UTF-8"?>
+    df = pd.read_excel(file_path)
+    resultados = []
+
+    login = 'robo.56780'
+    senha = 'Miguel1@@@'
+    codigo_entidade = '1581'
+    url = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
+
+    headers = {
+        'Content-Type': 'text/xml;charset=UTF-8',
+        'SOAPAction': ''
+    }
+
+    for cpf in df['CPF']:
+        xml_envio = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
   <soapenv:Header/>
   <soapenv:Body>
@@ -42,35 +67,30 @@ def consultar_bmg_planilha():
   </soapenv:Body>
 </soapenv:Envelope>"""
 
-            headers = {
-                'Content-Type': 'text/xml;charset=UTF-8',
-                'SOAPAction': ''
+        try:
+            response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
+            resultado = {
+                "CPF": cpf,
+                "Status": response.status_code,
+                "Resposta": response.text
+            }
+        except Exception as e:
+            resultado = {
+                "CPF": cpf,
+                "Status": "Erro",
+                "Resposta": str(e)
             }
 
-            url = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
+        resultados.append(resultado)
 
-            try:
-                response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
-                resultados.append({
-                    'CPF': cpf,
-                    'Status Code': response.status_code,
-                    'Resposta': response.text
-                })
-            except Exception as e:
-                resultados.append({
-                    'CPF': cpf,
-                    'Status Code': 'Erro',
-                    'Resposta': str(e)
-                })
+    df_resultado = pd.DataFrame(resultados)
+    df_resultado.to_excel(RESULT_FILE, index=False)
 
-        df_resultado = pd.DataFrame(resultados)
-        df_resultado.to_excel('retorno_bmg.xlsx', index=False)
-        return jsonify({'mensagem': 'Consulta finalizada com sucesso. Arquivo retorno_bmg.xlsx gerado.'})
+    return render_template_string(HTML_FORM, download=True)
 
-    except Exception as e:
-        return jsonify({'erro': str(e)}), 500
+@app.route("/download", methods=["GET"])
+def download():
+    return send_file(RESULT_FILE, as_attachment=True)
 
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
