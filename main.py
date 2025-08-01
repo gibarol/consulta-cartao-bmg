@@ -9,11 +9,14 @@ import logging
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Credenciais da API BMG
 USUARIO = "robo.56780"
 SENHA = "Miguel1@@@"
-URL_TOKEN = "https://webservice.econsig.bmg.com/auth"
-URL_CONSULTA = "https://webservice.econsig.bmg.com/cartao/consultaDisponibilidade"
+URL_TOKEN = "https://ws1.bmgconsig.com.br/auth"
+URL_CONSULTA = "https://ws1.bmgconsig.com.br/cartao/consultaDisponibilidade"
+
+@app.route('/')
+def home():
+    return 'API BMG Processor Online!'
 
 def obter_token():
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
@@ -34,9 +37,13 @@ def extrair_valores(xml_str):
         ns = {
             'soapenv': 'http://schemas.xmlsoap.org/soap/envelope/',
             'ns1': 'http://webservice.econsig.bmg.com',
+            'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+            'soapenc': 'http://schemas.xmlsoap.org/soap/encoding/'
         }
+
         root = ET.fromstring(xml_str)
         cartao = root.find(".//ns1:cartoesRetorno", ns)
+
         if cartao is None:
             return {}
 
@@ -47,17 +54,17 @@ def extrair_valores(xml_str):
         formas_envio = root.findall(".//ns1:formasEnvio/ns1:descricao", ns)
         formas = ', '.join([f.text for f in formas_envio]) if formas_envio else ''
 
-        msg = get('mensagemImpedimento')
-        saque = re.search(r'Limite disponivel para saque.*?: ([\d,.]+)', msg or '')
-        total = re.search(r'Limite disponível de Total.*?: ([\d,.]+)', msg or '')
-        credito = re.search(r'Limite de crédito.*?: ([\d,.]+)', msg or '')
+        msg = get('mensagemImpedimento') or ''
+        saque = re.search(r'Limite disponivel para saque.*?: ([\d,.]+)', msg)
+        total = re.search(r'Limite disponível de Total.*?: ([\d,.]+)', msg)
+        credito = re.search(r'Limite de crédito.*?: ([\d,.]+)', msg)
 
         return {
             'cpfImpedidoComissionar': get('cpfImpedidoComissionar'),
             'entidade': get('entidade'),
             'liberado': get('liberado'),
             'matricula': get('matricula'),
-            'mensagemImpedimento': msg or '',
+            'mensagemImpedimento': msg,
             'modalidadeSaque': get('modalidadeSaque'),
             'numeroAdesao': get('numeroAdesao'),
             'numeroCartao': get('numeroCartao'),
@@ -68,12 +75,7 @@ def extrair_valores(xml_str):
             'limiteCredito': credito.group(1) if credito else ''
         }
     except Exception as e:
-        logging.error(f"Erro ao extrair XML: {e}")
         return {}
-
-@app.route('/')
-def home():
-    return 'API BMG Processor Online!'
 
 @app.route('/consulta-planilha', methods=['POST'])
 def consulta_planilha():
@@ -85,33 +87,31 @@ def consulta_planilha():
         if file.filename == '':
             return jsonify({'erro': "Nome do arquivo vazio"}), 400
 
-        if not file.filename.endswith(('.xlsx', '.xls')):
-            return jsonify({'erro': "Tipo de arquivo inválido. Envie um arquivo .xlsx ou .xls"}), 400
-
         df = pd.read_excel(file)
         if 'cpf' not in df.columns:
             return jsonify({'erro': "A planilha deve conter uma coluna chamada 'cpf'"}), 400
 
+        cpfs = df['cpf'].astype(str).tolist()
         token = obter_token()
         if not token:
-            return jsonify({'erro': "Falha ao obter token do BMG"}), 500
+            return jsonify({'erro': "Falha ao obter token"}), 500
 
         resultados = []
-        for cpf in df['cpf'].astype(str):
+        for cpf in cpfs:
             try:
                 xml = consultar_bmg(cpf, token)
                 dados = extrair_valores(xml)
                 resultados.append({
                     'cpf': cpf,
                     'status': 'ok',
-                    'mensagem': f"Retorno do BMG para CPF {cpf}",
+                    'mensagem': f"Retorno simulado do BMG para CPF {cpf}",
                     **dados
                 })
-            except Exception as e:
+            except Exception:
                 resultados.append({
                     'cpf': cpf,
                     'status': 'erro',
-                    'mensagem': f"Erro ao consultar CPF {cpf}: {str(e)}"
+                    'mensagem': f"Erro ao consultar CPF {cpf}"
                 })
 
         df_saida = pd.DataFrame(resultados)
@@ -124,9 +124,10 @@ def consulta_planilha():
             download_name="retorno_bmg.xlsx",
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
+
     except Exception as e:
-        logging.exception("Erro geral na consulta da planilha")
-        return jsonify({'erro': f"Erro interno: {str(e)}"}), 500
+        logging.exception("Erro ao processar a planilha")
+        return jsonify({'erro': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=10000)
+    app.run()
