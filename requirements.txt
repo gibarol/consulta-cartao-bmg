@@ -1,3 +1,3 @@
 flask
-zeep
 requests
+gunicorn
