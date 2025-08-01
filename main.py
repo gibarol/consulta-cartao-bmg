@@ -1,40 +1,33 @@
-from flask import Flask, request, jsonify
-import requests
+from flask import Flask, request, send_file, jsonify
+import pandas as pd
+import tempfile
+import os
 
 app = Flask(__name__)
 
-@app.route('/consulta', methods=['GET'])
-def consulta_bmg():
-    cpf = request.args.get('cpf')
+@app.route('/upload', methods=['POST'])
+def upload_planilha():
+    if 'file' not in request.files:
+        return jsonify({"erro": "Arquivo não enviado"}), 400
 
-    if not cpf:
-        return jsonify({"erro": "CPF não informado"}), 400
-
-    url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar"
-
-    headers = {
-        "Content-Type": "text/xml;charset=UTF-8",
-        "SOAPAction": "buscarCartoesDisponiveis"
-    }
-
-    xml_body = f"""
-    <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                      xmlns:tem="http://tempuri.org/">
-       <soapenv:Header/>
-       <soapenv:Body>
-          <tem:buscarCartoesDisponiveis>
-             <tem:cpf>{cpf}</tem:cpf>
-             <tem:login>robo.56780</tem:login>
-             <tem:senha>Miguel1@@@</tem:senha>
-             <tem:codigoEntidade>56780</tem:codigoEntidade>
-          </tem:buscarCartoesDisponiveis>
-       </soapenv:Body>
-    </soapenv:Envelope>
-    """
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"erro": "Nome do arquivo inválido"}), 400
 
     try:
-        response = requests.post(url, data=xml_body.encode('utf-8'), headers=headers, timeout=30)
-        return response.text, response.status_code, {'Content-Type': 'text/xml'}
+        # Lê a planilha enviada
+        df = pd.read_excel(file)
+        if 'cpf' not in df.columns:
+            return jsonify({"erro": "Coluna 'cpf' não encontrada"}), 400
+
+        # Cria uma nova coluna simulando retorno
+        df['mensagem'] = 'Consulta simulada com sucesso'  # Aqui você coloca o retorno real do BMG
+
+        # Salva o arquivo temporariamente
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+        df.to_excel(temp_file.name, index=False)
+
+        return send_file(temp_file.name, as_attachment=True, download_name='resultado_consulta_bmg.xlsx')
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
