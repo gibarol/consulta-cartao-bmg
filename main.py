@@ -30,7 +30,10 @@ def consultar_bmg():
 
     headers = {
         'Content-Type': 'text/xml;charset=UTF-8',
-        'SOAPAction': ''
+        'SOAPAction': '',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Connection': 'keep-alive'
     }
 
     url = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
