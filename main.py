@@ -1,76 +1,134 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, send_file, jsonify
 import pandas as pd
-from io import BytesIO
-import tempfile
+import requests
+import xml.etree.ElementTree as ET
+import io
+import re
 import os
 
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return 'API BMG Planilha OK ✅'
+# Credenciais da API BMG (ajuste conforme necessário)
+USUARIO = "robo.56780"
+SENHA = "Sucesso1@@@"
+URL_TOKEN = "https://webservice.econsig.bmg.com/auth"
+URL_CONSULTA = "https://webservice.econsig.bmg.com/cartao/consultaDisponibilidade"
 
-@app.route('/consulta-planilha', methods=['POST'])
-def processar_planilha():
-    if 'file' not in request.files:
-        return jsonify({'erro': 'Nenhum arquivo enviado.'}), 400
+def obter_token():
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    data = {
+        'usuario': USUARIO,
+        'senha': SENHA,
+    }
+    response = requests.post(URL_TOKEN, headers=headers, data=data)
+    if response.status_code == 200:
+        return response.text.strip()
+    else:
+        return None
 
-    arquivo = request.files['file']
-    extensao = os.path.splitext(arquivo.filename)[1].lower()
+def consultar_bmg(cpf, token):
+    headers = {'Authorization': f'Bearer {token}'}
+    data = {'cpf': cpf}
+    response = requests.post(URL_CONSULTA, headers=headers, data=data)
+    return response.text
 
-    if extensao not in ['.xlsx', '.xls']:
-        return jsonify({'erro': 'Formato inválido. Envie um .xlsx ou .xls'}), 400
-
+def extrair_valores(xml_str):
     try:
-        # Lê o conteúdo da planilha direto da memória
-        df = pd.read_excel(BytesIO(arquivo.read()))
+        ns = {
+            'soapenv': 'http://schemas.xmlsoap.org/soap/envelope/',
+            'ns1': 'http://webservice.econsig.bmg.com',
+            'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+            'soapenc': 'http://schemas.xmlsoap.org/soap/encoding/'
+        }
 
-        # Verifica se a coluna "cpf" existe
-        if 'cpf' not in df.columns:
-            return jsonify({'erro': 'A planilha deve conter uma coluna chamada "cpf".'}), 400
+        root = ET.fromstring(xml_str)
+        cartao = root.find(".//ns1:cartoesRetorno", ns)
+
+        if cartao is None:
+            return {}
+
+        def get(tag):
+            el = cartao.find(f'ns1:{tag}', ns)
+            return el.text if el is not None else ''
+
+        formas_envio = root.findall(".//ns1:formasEnvio/ns1:descricao", ns)
+        formas = ', '.join([f.text for f in formas_envio]) if formas_envio else ''
+
+        msg = get('mensagemImpedimento') or ''
+        saque = re.search(r'Limite disponivel para saque\.\.\.: ([\d,\.]+)', msg)
+        total = re.search(r'Limite disponível de Total\.\.\.\.\.: ([\d,\.]+)', msg)
+        credito = re.search(r'Limite de crédito.*?: ([\d,\.]+)', msg)
+
+        return {
+            'cpfImpedidoComissionar': get('cpfImpedidoComissionar'),
+            'entidade': get('entidade'),
+            'liberado': get('liberado'),
+            'matricula': get('matricula'),
+            'mensagemImpedimento': msg,
+            'modalidadeSaque': get('modalidadeSaque'),
+            'numeroAdesao': get('numeroAdesao'),
+            'numeroCartao': get('numeroCartao'),
+            'numeroContaInterna': get('numeroContaInterna'),
+            'formasEnvio': formas,
+            'limiteSaque': saque.group(1) if saque else '',
+            'limiteTotal': total.group(1) if total else '',
+            'limiteCredito': credito.group(1) if credito else ''
+        }
+    except Exception as e:
+        return {}
+
+@app.route("/consulta-planilha", methods=["POST"])
+def processar_planilha():
+    try:
+        if "file" not in request.files:
+            return jsonify({"erro": "Arquivo não enviado"}), 400
+
+        file = request.files["file"]
+        if not file.filename.endswith((".xlsx", ".xls")):
+            return jsonify({"erro": "Tipo de arquivo inválido"}), 400
+
+        df = pd.read_excel(file)
+        if "cpf" not in df.columns:
+            return jsonify({"erro": "Coluna 'cpf' não encontrada"}), 400
+
+        token = obter_token()
+        if not token:
+            return jsonify({"erro": "Falha ao obter token"}), 500
 
         resultados = []
 
-        for cpf in df['cpf']:
-            # Aqui você faria a chamada real da API do BMG
-            # Vamos simular uma resposta rica com todos os dados
-            resposta_simulada = {
-                'cpf': cpf,
-                'status': 'ok',
-                'mensagem': f'Retorno simulado do BMG para CPF {cpf}',
-                'cpfImpedidoComissionar': False,
-                'entidade': '1581',
-                'liberado': False,
-                'matricula': '5369143931',
-                'mensagemImpedimento': 'Saque não liberado pelo motivo: Conta/Cartão com Bloqueio CRELI',
-                'modalidadeSaque': 'Parcelado',
-                'numeroAdesao': '38156227',
-                'numeroCartao': '5259xxxxxxxx8117',
-                'numeroContaInterna': '3431398',
-                'formasEnvio': 'Digital, Digital Token, Físico',
-                'limiteSaque': 344.86,
-                'limiteTotal': 344.86,
-                'limiteCredito': 2047.00
-            }
-
-            resultados.append(resposta_simulada)
+        for cpf in df["cpf"]:
+            try:
+                xml = consultar_bmg(str(cpf), token)
+                dados = extrair_valores(xml)
+                resultados.append({
+                    "cpf": cpf,
+                    "status": "ok",
+                    "mensagem": f"Retorno simulado do BMG para CPF {cpf}",
+                    **dados
+                })
+            except Exception:
+                resultados.append({
+                    "cpf": cpf,
+                    "status": "erro",
+                    "mensagem": f"Erro ao consultar CPF {cpf}"
+                })
 
         df_saida = pd.DataFrame(resultados)
 
-        # Cria um arquivo temporário para salvar a planilha
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-            caminho_saida = tmp.name
-            df_saida.to_excel(caminho_saida, index=False)
+        output = io.BytesIO()
+        df_saida.to_excel(output, index=False)
+        output.seek(0)
 
         return send_file(
-            caminho_saida,
-            as_attachment=True,
-            download_name='resultado-bmg.xlsx',
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            download_name="resultado_consulta_bmg.xlsx",
+            as_attachment=True
         )
 
     except Exception as e:
-        return jsonify({'erro': f'Erro ao processar a planilha: {str(e)}'}), 500
+        return jsonify({"erro": f"Erro interno: {str(e)}"}), 500
 
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
