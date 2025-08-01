@@ -1,5 +1,5 @@
-import httpx
 from flask import Flask, request, jsonify
+import httpx
 
 app = Flask(__name__)
 
@@ -22,20 +22,20 @@ def consulta_cpf():
     }
 
     payload = f"""<?xml version="1.0" encoding="UTF-8"?>
-    <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
-      <soapenv:Header/>
-      <soapenv:Body>
-        <web:buscarCartoesDisponiveis>
-          <param>
-            <login>robo.56780</login>
-            <senha>Miguel1@@@</senha>
-            <codigoEntidade>1581</codigoEntidade>
-            <cpf>{cpf}</cpf>
-            <sequencialOrgao></sequencialOrgao>
-          </param>
-        </web:buscarCartoesDisponiveis>
-      </soapenv:Body>
-    </soapenv:Envelope>"""
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <web:buscarCartoesDisponiveis>
+      <param>
+        <login>robo.56780</login>
+        <senha>Miguel1@@@</senha>
+        <codigoEntidade>1581</codigoEntidade>
+        <cpf>{cpf}</cpf>
+        <sequencialOrgao></sequencialOrgao>
+      </param>
+    </web:buscarCartoesDisponiveis>
+  </soapenv:Body>
+</soapenv:Envelope>"""
 
     try:
         response = httpx.post(url, data=payload, headers=headers, timeout=20.0)
@@ -47,3 +47,7 @@ def consulta_cpf():
         }), response.status_code
     except Exception as e:
         return jsonify({"cpf": cpf, "erro": str(e)}), 500
+
+# Isso garante que funcione localmente também
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
