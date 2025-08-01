@@ -3,23 +3,16 @@ import requests
 
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return 'API Consulta CPF BMG Online!'
-
 @app.route('/consulta', methods=['GET'])
-def consulta_cpf():
+def consulta():
     cpf = request.args.get('cpf')
+    
     if not cpf:
-        return Response("Erro: CPF não informado", status=400)
+        return 'CPF não informado', 400
 
-    url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar"
-    headers = {
-        "Content-Type": "text/xml;charset=UTF-8",
-        "SOAPAction": "buscarCartoesDisponiveis"
-    }
-
-    body = f"""
+    url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar?wsdl"
+    headers = {'Content-Type': 'text/xml; charset=utf-8'}
+    xml_body = f"""
     <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
       <soapenv:Header/>
       <soapenv:Body>
@@ -37,10 +30,7 @@ def consulta_cpf():
     """
 
     try:
-        response = requests.post(url, data=body.strip().encode('utf-8'), headers=headers, timeout=30)
-        return Response(response.text, status=response.status_code, mimetype='text/xml')
+        response = requests.post(url, data=xml_body.encode('utf-8'), headers=headers, timeout=30)
+        return Response(response.content, content_type='text/xml')
     except Exception as e:
-        return Response(f"Erro interno: {str(e)}", status=500)
-
-if __name__ == '__main__':
-    app.run()
+        return {'erro': str(e)}, 500
