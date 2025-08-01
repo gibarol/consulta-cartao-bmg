@@ -73,7 +73,7 @@ def consultar_bmg(cpf):
              <tem:cpf>{cpf}</tem:cpf>
              <tem:login>robo.56780</tem:login>
              <tem:senha>Miguel1@@@</tem:senha>
-             <tem:codigoEntidade>56780</tem:codigoEntidade>
+             <tem:codigoEntidade>1581</tem:codigoEntidade>
           </tem:buscarCartoesDisponiveis>
        </soapenv:Body>
     </soapenv:Envelope>
