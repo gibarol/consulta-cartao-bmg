@@ -1,18 +1,11 @@
 
 from flask import Flask, request, send_file, jsonify
 import pandas as pd
-import os
 import requests
 import xml.etree.ElementTree as ET
-import logging
-from datetime import datetime
+import io
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
-
-@app.route('/')
-def home():
-    return 'API BMG SOAP Online com Planilha!'
 
 @app.route('/consulta-planilha', methods=['POST'])
 def consulta_planilha():
@@ -32,82 +25,88 @@ def consulta_planilha():
         resultados = []
 
         for cpf in cpfs:
+            xml = f"""
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:web="http://webservice.econsig.bmg.com">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <web:buscarCartoesDisponiveis>
+      <param>
+        <login>robo.56780</login>
+        <senha>Miguel1@@@</senha>
+        <codigoEntidade>1581</codigoEntidade>
+        <cpf>{cpf}</cpf>
+        <sequencialOrgao></sequencialOrgao>
+      </param>
+    </web:buscarCartoesDisponiveis>
+  </soapenv:Body>
+</soapenv:Envelope>
+"""
+
+            headers = {
+                "Content-Type": "text/xml;charset=UTF-8",
+                "SOAPAction": ""
+            }
+
             try:
-                dados = consultar_bmg(cpf)
-                resultados.append(dados)
-            except Exception as e:
+                response = requests.post(
+                    url="https://ws1.bmgconsig.com.br/webservices/SaqueComplementar",
+                    data=xml.encode('utf-8'),
+                    headers=headers,
+                    timeout=30
+                )
+
+                if response.status_code != 200:
+                    resultados.append({'cpf': cpf, 'erro': f'Erro HTTP {response.status_code}'})
+                    continue
+
+                root = ET.fromstring(response.content)
+                ns = {'ns1': 'http://webservice.econsig.bmg.com'}
+                cartao = root.find(".//ns1:cartoesRetorno", ns)
+
+                def get_text(tag):
+                    el = cartao.find(f"ns1:{tag}", ns) if cartao is not None else None
+                    return el.text.strip() if el is not None else ''
+
+                msg = get_text('mensagemImpedimento')
+                import re
+                saque = re.search(r'saque.*?: ([\d.,]+)', msg)
+                total = re.search(r'Total.*?: ([\d.,]+)', msg)
+                credito = re.search(r'crédito.*?: ([\d.,]+)', msg)
+
+                formas_envio = root.findall(".//ns1:formasEnvio/ns1:descricao", ns)
+                formas = ', '.join([f.text for f in formas_envio]) if formas_envio else ''
+
                 resultados.append({
                     'cpf': cpf,
-                    'erro': str(e)
+                    'liberado': get_text('liberado'),
+                    'mensagemImpedimento': msg,
+                    'limiteSaque': saque.group(1) if saque else '',
+                    'limiteTotal': total.group(1) if total else '',
+                    'limiteCredito': credito.group(1) if credito else '',
+                    'formasEnvio': formas
                 })
 
+            except Exception as e:
+                resultados.append({'cpf': cpf, 'erro': str(e)})
+
         df_saida = pd.DataFrame(resultados)
-        nome_saida = f"/tmp/retorno_bmg_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
-        df_saida.to_excel(nome_saida, index=False)
+        caminho_saida = "/tmp/retorno_bmg.xlsx"
+        df_saida.to_excel(caminho_saida, index=False)
 
         return send_file(
-            nome_saida,
+            caminho_saida,
             as_attachment=True,
             download_name="retorno_bmg.xlsx",
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
 
     except Exception as e:
-        logging.exception("Erro ao processar planilha")
         return jsonify({'erro': str(e)}), 500
 
-
-def consultar_bmg(cpf):
-    url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar"
-    headers = {
-        "Content-Type": "text/xml;charset=UTF-8",
-        "SOAPAction": "buscarCartoesDisponiveis"
-    }
-
-    body = f"""
-    <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                      xmlns:tem="http://tempuri.org/">
-       <soapenv:Header/>
-       <soapenv:Body>
-          <tem:buscarCartoesDisponiveis>
-             <tem:cpf>{cpf}</tem:cpf>
-             <tem:login>robo.56780</tem:login>
-             <tem:senha>Miguel1@@@</tem:senha>
-             <tem:codigoEntidade>1581</tem:codigoEntidade>
-          </tem:buscarCartoesDisponiveis>
-       </soapenv:Body>
-    </soapenv:Envelope>
-    """.strip()
-
-    response = requests.post(url, data=body.encode('utf-8'), headers=headers, timeout=30)
-    if response.status_code != 200:
-        raise Exception(f"Erro HTTP {response.status_code}")
-
-    root = ET.fromstring(response.content)
-    namespaces = {'soap': 'http://schemas.xmlsoap.org/soap/envelope/'}
-    body = root.find('soap:Body', namespaces)
-    if body is None:
-        raise Exception("Resposta SOAP inválida")
-
-    dados = {
-        'cpf': cpf,
-        'status': 'ok',
-        'mensagem': f"Consulta realizada com sucesso",
-        'limiteSaque': extrair_valor_tag(response.text, 'limiteDisponivelSaque'),
-        'limiteTotal': extrair_valor_tag(response.text, 'limiteDisponivelTotal'),
-        'limiteCredito': extrair_valor_tag(response.text, 'limiteCredito')
-    }
-
-    return dados
-
-
-def extrair_valor_tag(xml, tag):
-    try:
-        start = xml.find(f"<{tag}>") + len(tag) + 2
-        end = xml.find(f"</{tag}>")
-        return xml[start:end].strip()
-    except:
-        return ""
+@app.route('/')
+def home():
+    return 'API Consulta BMG Online'
 
 if __name__ == '__main__':
     app.run()
