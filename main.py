@@ -1,16 +1,27 @@
-from flask import Flask, request, Response
-import requests
+import httpx
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-@app.route('/consulta', methods=['GET'])
-def consulta():
-    cpf = request.args.get('cpf')
-
+@app.route("/consulta", methods=["GET"])
+def consulta_cpf():
+    cpf = request.args.get("cpf")
     if not cpf:
-        return {"erro": "CPF não informado"}, 400
+        return jsonify({"erro": "CPF não informado"}), 400
 
-    soap_body = f"""
+    url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar?wsdl"
+
+    headers = {
+        "Content-Type": "text/xml; charset=utf-8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "pt-BR,pt;q=0.9",
+        "Origin": "https://bmgconsig.com.br",
+        "Referer": "https://bmgconsig.com.br/",
+        "SOAPAction": ""
+    }
+
+    payload = f"""<?xml version="1.0" encoding="UTF-8"?>
     <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
       <soapenv:Header/>
       <soapenv:Body>
@@ -24,28 +35,15 @@ def consulta():
           </param>
         </web:buscarCartoesDisponiveis>
       </soapenv:Body>
-    </soapenv:Envelope>
-    """
-
-    headers = {
-        'Content-Type': 'text/xml; charset=utf-8',
-        'SOAPAction': ''
-    }
-
-    url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar?wsdl"
+    </soapenv:Envelope>"""
 
     try:
-        response = requests.post(url, data=soap_body.encode('utf-8'), headers=headers)
-
-        if response.status_code == 200:
-            return Response(response.content, mimetype='application/xml')
-        else:
-            return {
-                "cpf": cpf,
-                "status_code": response.status_code,
-                "erro": f"Erro HTTP {response.status_code}",
-                "resposta": response.text
-            }, response.status_code
-
+        response = httpx.post(url, data=payload, headers=headers, timeout=20.0)
+        return jsonify({
+            "cpf": cpf,
+            "status_code": response.status_code,
+            "erro": f"Erro HTTP {response.status_code}" if response.status_code != 200 else "",
+            "resposta": response.text
+        }), response.status_code
     except Exception as e:
-        return {"cpf": cpf, "erro": str(e)}, 500
+        return jsonify({"cpf": cpf, "erro": str(e)}), 500
