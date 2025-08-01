@@ -1,79 +1,62 @@
-
 from flask import Flask, request, jsonify
-import requests, os, pandas as pd
+import pandas as pd
+import os
+import logging
 
 app = Flask(__name__)
 
-@app.route("/")
+# Configura o log para aparecer no console da Render
+logging.basicConfig(level=logging.INFO)
+
+@app.route('/')
 def home():
-    return "API BMG Processor Online!"
+    return 'API BMG Processor Online!'
 
-@app.route("/consulta-planilha", methods=["POST"])
-def processar_planilha():
-    if 'file' not in request.files:
-        return jsonify({"erro": "Arquivo não enviado"}), 400
-
-    arquivo = request.files['file']
-    if not arquivo.filename.endswith('.xlsx'):
-        return jsonify({"erro": "Formato inválido. Envie um .xlsx"}), 400
-
+@app.route('/consulta-planilha', methods=['POST'])
+def consulta_planilha():
     try:
-        df = pd.read_excel(arquivo)
+        if 'file' not in request.files:
+            logging.error("Nenhum arquivo enviado na chave 'file'.")
+            return jsonify({'erro': "Arquivo não enviado (campo 'file' obrigatório)"}), 400
+
+        file = request.files['file']
+
+        if file.filename == '':
+            logging.error("Nome do arquivo vazio.")
+            return jsonify({'erro': "Nome do arquivo vazio"}), 400
+
+        logging.info(f"Arquivo recebido: {file.filename}")
+
+        # Tenta ler a planilha
+        try:
+            df = pd.read_excel(file)
+            logging.info(f"Colunas encontradas: {list(df.columns)}")
+        except Exception as e:
+            logging.exception("Erro ao ler a planilha")
+            return jsonify({'erro': f"Erro ao ler o arquivo Excel: {str(e)}"}), 400
+
+        # Verifica se a coluna 'cpf' existe
+        if 'cpf' not in df.columns:
+            logging.error("Coluna 'cpf' não encontrada na planilha.")
+            return jsonify({'erro': "A planilha deve conter uma coluna chamada 'cpf'"}), 400
+
+        cpfs = df['cpf'].astype(str).tolist()
+
+        # Simulação de processamento (pode substituir com chamada ao BMG)
+        resultados = []
+        for cpf in cpfs:
+            logging.info(f"Processando CPF: {cpf}")
+            resultados.append({
+                'cpf': cpf,
+                'status': 'ok',  # aqui pode ser "consultado", "erro", etc
+                'mensagem': f"Simulação para CPF {cpf}"
+            })
+
+        return jsonify({'resultado': resultados}), 200
+
     except Exception as e:
-        return jsonify({"erro": f"Erro ao ler planilha: {str(e)}"}), 500
+        logging.exception("Erro interno ao processar a planilha")
+        return jsonify({'erro': f"Erro interno: {str(e)}"}), 500
 
-    colunas_possiveis = ['cpf', 'CPF', 'Cpf', 'cpf_cliente', 'cpf_cliente_']
-    coluna_cpf = next((col for col in df.columns if col.strip() in colunas_possiveis), None)
-    if not coluna_cpf:
-        return jsonify({"erro": "Coluna de CPF não encontrada"}), 400
-
-    resultados = []
-
-    for _, row in df.iterrows():
-        cpf = str(row.get(coluna_cpf)).strip()
-        if not cpf or cpf.lower() == 'nan':
-            continue
-
-        resultado = consultar_bmg(cpf)
-        resultados.append({"cpf": cpf, **resultado})
-
-    df_saida = pd.DataFrame(resultados)
-    caminho_saida = "/mnt/data/retorno_bmg.xlsx"
-    df_saida.to_excel(caminho_saida, index=False)
-    return jsonify({"mensagem": "Consulta finalizada", "arquivo": caminho_saida})
-
-def consultar_bmg(cpf):
-    login = 'robo.56780'
-    senha = 'Miguel1@@@'
-    codigo_entidade = '1581'
-
-    xml_envio = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <web:buscarCartoesDisponiveis>
-      <param>
-        <login>{login}</login>
-        <senha>{senha}</senha>
-        <codigoEntidade>{codigo_entidade}</codigoEntidade>
-        <cpf>{cpf}</cpf>
-        <sequencialOrgao></sequencialOrgao>
-      </param>
-    </web:buscarCartoesDisponiveis>
-  </soapenv:Body>
-</soapenv:Envelope>"""
-
-    headers = {'Content-Type': 'text/xml;charset=UTF-8', 'SOAPAction': ''}
-    url = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
-
-    try:
-        response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
-        return {
-            "status": response.status_code,
-            "resposta": response.text.strip()
-        }
-    except Exception as e:
-        return {"erro": str(e)}
-
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run(debug=False, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
