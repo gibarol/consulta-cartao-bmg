@@ -13,7 +13,7 @@ def consultar_bmg():
     senha = 'Miguel1@@@'
     codigo_entidade = '1581'
 
-    # XML de requisição conforme modelo fornecido
+    # XML de requisição conforme modelo oficial
     xml_envio = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
   <soapenv:Header/>
@@ -35,7 +35,8 @@ def consultar_bmg():
         'SOAPAction': ''
     }
 
-    url = 'https://econsig.bmg.com/webservices/econsigws'  # ajustar conforme necessário
+    # Novo endpoint oficial do BMG
+    url = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
 
     try:
         response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
