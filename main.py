@@ -37,7 +37,7 @@ def consulta():
             "senha": "Sucesso1@@@",
             "loginConsig": "robo.56780",
             "codigoEntidade": "4277",
-            "cpf": cpf,
+            "cpf": "99925125634",
             "senhaConsig": "Sucesso1@@@",
             "sequencialOrgao": 1
         }
