@@ -38,7 +38,6 @@ def consultar_bmg():
     try:
         response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
 
-        # Criar log detalhado sempre, mesmo com erro
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_text = f"TIMESTAMP: {timestamp}\n\nCPF: {cpf}\n\nXML ENVIADO:\n{xml_envio}\n\nSTATUS CODE: {response.status_code}\n\nRESPOSTA RECEBIDA:\n{response.text}"
 
@@ -53,6 +52,23 @@ def consultar_bmg():
         with open("log_bmg.txt", "w", encoding="utf-8") as f:
             f.write(error_message)
         return jsonify({'erro': 'Erro na requisição', 'detalhe': str(e)}), 500
+
+@app.route('/meuip', methods=['GET'])
+def meu_ip():
+    try:
+        ip = requests.get("https://api.ipify.org").text
+        return jsonify({'ip_publico': ip})
+    except Exception as e:
+        return jsonify({'erro': 'Falha ao obter IP', 'detalhe': str(e)}), 500
+
+@app.route('/log', methods=['GET'])
+def ver_log():
+    try:
+        with open("log_bmg.txt", "r", encoding="utf-8") as f:
+            conteudo = f.read()
+        return f"<pre>{conteudo}</pre>"
+    except Exception as e:
+        return jsonify({'erro': 'Não foi possível ler o log', 'detalhe': str(e)}), 500
 
 if __name__ == '__main__':
     app.run()
