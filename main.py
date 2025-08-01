@@ -1,26 +1,51 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import requests
 import datetime
+import pandas as pd
+import os
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+UPLOAD_FOLDER = '/tmp/uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-@app.route('/consulta', methods=['GET'])
-def consultar_bmg():
-    cpf = request.args.get('cpf', '99925125634')  # valor padrão para teste
+# Configuração de autenticação
+LOGIN = 'robo.56780'
+SENHA = 'Miguel1@@@'
+CODIGO_ENTIDADE = '1581'
+URL_BMG = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
 
-    login = 'robo.56780'
-    senha = 'Miguel1@@@'
-    codigo_entidade = '1581'
+@app.route('/')
+def status():
+    return 'Servidor BMG online!'
 
-    xml_envio = f"""<?xml version="1.0" encoding="UTF-8"?>
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'erro': 'Nenhum arquivo enviado.'}), 400
+
+    filename = secure_filename(file.filename)
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(file_path)
+
+    df = pd.read_excel(file_path)
+    resultados = []
+
+    for _, row in df.iterrows():
+        cpf = str(row.get('cpf')).strip()
+        if not cpf or cpf == 'nan':
+            continue
+
+        xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
   <soapenv:Header/>
   <soapenv:Body>
     <web:buscarCartoesDisponiveis>
       <param>
-        <login>{login}</login>
-        <senha>{senha}</senha>
-        <codigoEntidade>{codigo_entidade}</codigoEntidade>
+        <login>{LOGIN}</login>
+        <senha>{SENHA}</senha>
+        <codigoEntidade>{CODIGO_ENTIDADE}</codigoEntidade>
         <cpf>{cpf}</cpf>
         <sequencialOrgao></sequencialOrgao>
       </param>
@@ -28,50 +53,34 @@ def consultar_bmg():
   </soapenv:Body>
 </soapenv:Envelope>"""
 
-    headers = {
-        'Content-Type': 'text/xml;charset=UTF-8',
-        'SOAPAction': '',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-    }
+        try:
+            headers = {'Content-Type': 'text/xml;charset=UTF-8', 'SOAPAction': ''}
+            response = requests.post(URL_BMG, data=xml.encode('utf-8'), headers=headers, timeout=30)
+            status = response.status_code
+            conteudo = response.text
 
-    url = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
+        except Exception as e:
+            status = 'erro'
+            conteudo = str(e)
 
-    try:
-        response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
+        resultados.append({
+            'cpf': cpf,
+            'status_code': status,
+            'resposta': conteudo
+        })
 
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        log_text = f"TIMESTAMP: {timestamp}\n\nCPF: {cpf}\n\nXML ENVIADO:\n{xml_envio}\n\nSTATUS CODE: {response.status_code}\n\nRESPOSTA RECEBIDA:\n{response.text}"
+    retorno_path = os.path.join(UPLOAD_FOLDER, f'resposta_bmg_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}.xlsx')
+    df_resultado = pd.DataFrame(resultados)
+    df_resultado.to_excel(retorno_path, index=False)
 
-        with open("log_bmg.txt", "w", encoding="utf-8") as f:
-            f.write(log_text)
+    return jsonify({'mensagem': 'Processado com sucesso.', 'download': f'/download/{os.path.basename(retorno_path)}'})
 
-        return response.text, response.status_code
-
-    except requests.exceptions.RequestException as e:
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        error_message = f"TIMESTAMP: {timestamp}\n\nErro na requisição: {str(e)}\n\nXML Enviado:\n{xml_envio}"
-        with open("log_bmg.txt", "w", encoding="utf-8") as f:
-            f.write(error_message)
-        return jsonify({'erro': 'Erro na requisição', 'detalhe': str(e)}), 500
-
-@app.route('/meuip', methods=['GET'])
-def meu_ip():
-    try:
-        ip = requests.get("https://api.ipify.org").text
-        return jsonify({'ip_publico': ip})
-    except Exception as e:
-        return jsonify({'erro': 'Falha ao obter IP', 'detalhe': str(e)}), 500
-
-@app.route('/log', methods=['GET'])
-def ver_log():
-    try:
-        with open("log_bmg.txt", "r", encoding="utf-8") as f:
-            conteudo = f.read()
-        return f"<pre>{conteudo}</pre>"
-    except Exception as e:
-        return jsonify({'erro': 'Não foi possível ler o log', 'detalhe': str(e)}), 500
+@app.route('/download/<nome_arquivo>')
+def download(nome_arquivo):
+    caminho = os.path.join(UPLOAD_FOLDER, nome_arquivo)
+    if not os.path.exists(caminho):
+        return jsonify({'erro': 'Arquivo não encontrado'}), 404
+    return send_file(caminho, as_attachment=True)
 
 if __name__ == '__main__':
-    app.run()
+    app.run(host='0.0.0.0', port=10000)
