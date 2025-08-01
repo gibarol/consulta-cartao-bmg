@@ -1,57 +1,41 @@
-
-from flask import Flask, request, jsonify, send_file, render_template_string
-import requests
-import datetime
+from flask import Flask, request, jsonify
+import requests, os, datetime
 import pandas as pd
-import os
 
 app = Flask(__name__)
 
-UPLOAD_FOLDER = '/mnt/data/uploads'
-RESULT_FILE = '/mnt/data/retorno_bmg.xlsx'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+@app.route("/")
+def home():
+    return "API BMG Processor Online!"
 
-HTML_FORM = '''
-<!doctype html>
-<title>Consulta Cartão BMG</title>
-<h2>Enviar planilha com CPF</h2>
-<form method=post enctype=multipart/form-data action="/consulta">
-  <input type=file name=file>
-  <input type=submit value=Enviar>
-</form>
-{% if download %}
-  <a href="/download">Baixar resultado</a>
-{% endif %}
-'''
+@app.route("/consulta-planilha", methods=["POST"])
+def processar_planilha():
+    if 'file' not in request.files:
+        return jsonify({"erro": "Arquivo não enviado"}), 400
 
-@app.route("/", methods=["GET"])
-def index():
-    return render_template_string(HTML_FORM, download=False)
+    arquivo = request.files['file']
+    if not arquivo.filename.endswith('.xlsx'):
+        return jsonify({"erro": "Formato inválido. Envie um .xlsx"}), 400
 
-@app.route("/consulta", methods=["POST"])
-def consulta():
-    file = request.files.get("file")
-    if not file:
-        return "Nenhum arquivo enviado", 400
-
-    file_path = os.path.join(UPLOAD_FOLDER, "entrada.xlsx")
-    file.save(file_path)
-
-    df = pd.read_excel(file_path)
+    df = pd.read_excel(arquivo)
     resultados = []
 
+    for _, row in df.iterrows():
+        cpf = str(row['cpf'])
+        resultado = consultar_bmg(cpf)
+        resultados.append({"cpf": cpf, **resultado})
+
+    df_saida = pd.DataFrame(resultados)
+    caminho_saida = "/mnt/data/retorno_bmg.xlsx"
+    df_saida.to_excel(caminho_saida, index=False)
+    return jsonify({"mensagem": "Consulta finalizada", "arquivo": caminho_saida})
+
+def consultar_bmg(cpf):
     login = 'robo.56780'
     senha = 'Miguel1@@@'
     codigo_entidade = '1581'
-    url = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
 
-    headers = {
-        'Content-Type': 'text/xml;charset=UTF-8',
-        'SOAPAction': ''
-    }
-
-    for cpf in df['CPF']:
-        xml_envio = f"""<?xml version="1.0" encoding="UTF-8"?>
+    xml_envio = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
   <soapenv:Header/>
   <soapenv:Body>
@@ -67,30 +51,17 @@ def consulta():
   </soapenv:Body>
 </soapenv:Envelope>"""
 
-        try:
-            response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
-            resultado = {
-                "CPF": cpf,
-                "Status": response.status_code,
-                "Resposta": response.text
-            }
-        except Exception as e:
-            resultado = {
-                "CPF": cpf,
-                "Status": "Erro",
-                "Resposta": str(e)
-            }
+    headers = {'Content-Type': 'text/xml;charset=UTF-8', 'SOAPAction': ''}
+    url = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
 
-        resultados.append(resultado)
-
-    df_resultado = pd.DataFrame(resultados)
-    df_resultado.to_excel(RESULT_FILE, index=False)
-
-    return render_template_string(HTML_FORM, download=True)
-
-@app.route("/download", methods=["GET"])
-def download():
-    return send_file(RESULT_FILE, as_attachment=True)
+    try:
+        response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
+        return {
+            "status": response.status_code,
+            "resposta": response.text.strip()
+        }
+    except Exception as e:
+        return {"erro": str(e)}
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(debug=True)
