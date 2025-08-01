@@ -4,27 +4,24 @@ import requests
 import xml.etree.ElementTree as ET
 import io
 import re
-import os
+import logging
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
 
-# Credenciais da API BMG (ajuste conforme necessário)
+# Credenciais da API BMG
 USUARIO = "robo.56780"
-SENHA = "Sucesso1@@@"
+SENHA = "Miguel1@@@"
 URL_TOKEN = "https://webservice.econsig.bmg.com/auth"
 URL_CONSULTA = "https://webservice.econsig.bmg.com/cartao/consultaDisponibilidade"
 
 def obter_token():
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-    data = {
-        'usuario': USUARIO,
-        'senha': SENHA,
-    }
+    data = {'usuario': USUARIO, 'senha': SENHA}
     response = requests.post(URL_TOKEN, headers=headers, data=data)
     if response.status_code == 200:
         return response.text.strip()
-    else:
-        return None
+    return None
 
 def consultar_bmg(cpf, token):
     headers = {'Authorization': f'Bearer {token}'}
@@ -37,13 +34,9 @@ def extrair_valores(xml_str):
         ns = {
             'soapenv': 'http://schemas.xmlsoap.org/soap/envelope/',
             'ns1': 'http://webservice.econsig.bmg.com',
-            'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
-            'soapenc': 'http://schemas.xmlsoap.org/soap/encoding/'
         }
-
         root = ET.fromstring(xml_str)
         cartao = root.find(".//ns1:cartoesRetorno", ns)
-
         if cartao is None:
             return {}
 
@@ -54,17 +47,17 @@ def extrair_valores(xml_str):
         formas_envio = root.findall(".//ns1:formasEnvio/ns1:descricao", ns)
         formas = ', '.join([f.text for f in formas_envio]) if formas_envio else ''
 
-        msg = get('mensagemImpedimento') or ''
-        saque = re.search(r'Limite disponivel para saque\.\.\.: ([\d,\.]+)', msg)
-        total = re.search(r'Limite disponível de Total\.\.\.\.\.: ([\d,\.]+)', msg)
-        credito = re.search(r'Limite de crédito.*?: ([\d,\.]+)', msg)
+        msg = get('mensagemImpedimento')
+        saque = re.search(r'Limite disponivel para saque.*?: ([\d,.]+)', msg or '')
+        total = re.search(r'Limite disponível de Total.*?: ([\d,.]+)', msg or '')
+        credito = re.search(r'Limite de crédito.*?: ([\d,.]+)', msg or '')
 
         return {
             'cpfImpedidoComissionar': get('cpfImpedidoComissionar'),
             'entidade': get('entidade'),
             'liberado': get('liberado'),
             'matricula': get('matricula'),
-            'mensagemImpedimento': msg,
+            'mensagemImpedimento': msg or '',
             'modalidadeSaque': get('modalidadeSaque'),
             'numeroAdesao': get('numeroAdesao'),
             'numeroCartao': get('numeroCartao'),
@@ -75,60 +68,65 @@ def extrair_valores(xml_str):
             'limiteCredito': credito.group(1) if credito else ''
         }
     except Exception as e:
+        logging.error(f"Erro ao extrair XML: {e}")
         return {}
 
-@app.route("/consulta-planilha", methods=["POST"])
-def processar_planilha():
-    try:
-        if "file" not in request.files:
-            return jsonify({"erro": "Arquivo não enviado"}), 400
+@app.route('/')
+def home():
+    return 'API BMG Processor Online!'
 
-        file = request.files["file"]
-        if not file.filename.endswith((".xlsx", ".xls")):
-            return jsonify({"erro": "Tipo de arquivo inválido"}), 400
+@app.route('/consulta-planilha', methods=['POST'])
+def consulta_planilha():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'erro': "Arquivo não enviado (campo 'file' obrigatório)"}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'erro': "Nome do arquivo vazio"}), 400
+
+        if not file.filename.endswith(('.xlsx', '.xls')):
+            return jsonify({'erro': "Tipo de arquivo inválido. Envie um arquivo .xlsx ou .xls"}), 400
 
         df = pd.read_excel(file)
-        if "cpf" not in df.columns:
-            return jsonify({"erro": "Coluna 'cpf' não encontrada"}), 400
+        if 'cpf' not in df.columns:
+            return jsonify({'erro': "A planilha deve conter uma coluna chamada 'cpf'"}), 400
 
         token = obter_token()
         if not token:
-            return jsonify({"erro": "Falha ao obter token"}), 500
+            return jsonify({'erro': "Falha ao obter token do BMG"}), 500
 
         resultados = []
-
-        for cpf in df["cpf"]:
+        for cpf in df['cpf'].astype(str):
             try:
-                xml = consultar_bmg(str(cpf), token)
+                xml = consultar_bmg(cpf, token)
                 dados = extrair_valores(xml)
                 resultados.append({
-                    "cpf": cpf,
-                    "status": "ok",
-                    "mensagem": f"Retorno simulado do BMG para CPF {cpf}",
+                    'cpf': cpf,
+                    'status': 'ok',
+                    'mensagem': f"Retorno do BMG para CPF {cpf}",
                     **dados
                 })
-            except Exception:
+            except Exception as e:
                 resultados.append({
-                    "cpf": cpf,
-                    "status": "erro",
-                    "mensagem": f"Erro ao consultar CPF {cpf}"
+                    'cpf': cpf,
+                    'status': 'erro',
+                    'mensagem': f"Erro ao consultar CPF {cpf}: {str(e)}"
                 })
 
         df_saida = pd.DataFrame(resultados)
-
-        output = io.BytesIO()
-        df_saida.to_excel(output, index=False)
-        output.seek(0)
+        caminho_saida = "/tmp/retorno_bmg.xlsx"
+        df_saida.to_excel(caminho_saida, index=False)
 
         return send_file(
-            output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            download_name="resultado_consulta_bmg.xlsx",
-            as_attachment=True
+            caminho_saida,
+            as_attachment=True,
+            download_name="retorno_bmg.xlsx",
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-
     except Exception as e:
-        return jsonify({"erro": f"Erro interno: {str(e)}"}), 500
+        logging.exception("Erro geral na consulta da planilha")
+        return jsonify({'erro': f"Erro interno: {str(e)}"}), 500
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(host="0.0.0.0", port=10000)
