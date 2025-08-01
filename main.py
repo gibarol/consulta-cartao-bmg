@@ -1,51 +1,40 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 import requests
 import datetime
-import pandas as pd
 import os
-from werkzeug.utils import secure_filename
+import pandas as pd
 
 app = Flask(__name__)
-UPLOAD_FOLDER = '/tmp/uploads'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Configuração de autenticação
-LOGIN = 'robo.56780'
-SENHA = 'Miguel1@@@'
-CODIGO_ENTIDADE = '1581'
-URL_BMG = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
+@app.route('/consulta', methods=['POST'])
+def consultar_bmg_planilha():
+    if 'file' not in request.files:
+        return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
 
-@app.route('/')
-def status():
-    return 'Servidor BMG online!'
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'erro': 'Nome de arquivo inválido'}), 400
 
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    file = request.files.get('file')
-    if not file:
-        return jsonify({'erro': 'Nenhum arquivo enviado.'}), 400
+    try:
+        df = pd.read_excel(file)
+        resultados = []
 
-    filename = secure_filename(file.filename)
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(file_path)
+        for index, row in df.iterrows():
+            cpf = str(row['CPF']).strip()
 
-    df = pd.read_excel(file_path)
-    resultados = []
+            login = 'robo.56780'
+            senha = 'Miguel1@@@'
+            codigo_entidade = '1581'
 
-    for _, row in df.iterrows():
-        cpf = str(row.get('cpf')).strip()
-        if not cpf or cpf == 'nan':
-            continue
-
-        xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+            xml_envio = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
   <soapenv:Header/>
   <soapenv:Body>
     <web:buscarCartoesDisponiveis>
       <param>
-        <login>{LOGIN}</login>
-        <senha>{SENHA}</senha>
-        <codigoEntidade>{CODIGO_ENTIDADE}</codigoEntidade>
+        <login>{login}</login>
+        <senha>{senha}</senha>
+        <codigoEntidade>{codigo_entidade}</codigoEntidade>
         <cpf>{cpf}</cpf>
         <sequencialOrgao></sequencialOrgao>
       </param>
@@ -53,34 +42,35 @@ def upload_file():
   </soapenv:Body>
 </soapenv:Envelope>"""
 
-        try:
-            headers = {'Content-Type': 'text/xml;charset=UTF-8', 'SOAPAction': ''}
-            response = requests.post(URL_BMG, data=xml.encode('utf-8'), headers=headers, timeout=30)
-            status = response.status_code
-            conteudo = response.text
+            headers = {
+                'Content-Type': 'text/xml;charset=UTF-8',
+                'SOAPAction': ''
+            }
 
-        except Exception as e:
-            status = 'erro'
-            conteudo = str(e)
+            url = 'https://ws1.bmgconsig.com.br/webservices/SaqueComplementar'
 
-        resultados.append({
-            'cpf': cpf,
-            'status_code': status,
-            'resposta': conteudo
-        })
+            try:
+                response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
+                resultados.append({
+                    'CPF': cpf,
+                    'Status Code': response.status_code,
+                    'Resposta': response.text
+                })
+            except Exception as e:
+                resultados.append({
+                    'CPF': cpf,
+                    'Status Code': 'Erro',
+                    'Resposta': str(e)
+                })
 
-    retorno_path = os.path.join(UPLOAD_FOLDER, f'resposta_bmg_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}.xlsx')
-    df_resultado = pd.DataFrame(resultados)
-    df_resultado.to_excel(retorno_path, index=False)
+        df_resultado = pd.DataFrame(resultados)
+        df_resultado.to_excel('retorno_bmg.xlsx', index=False)
+        return jsonify({'mensagem': 'Consulta finalizada com sucesso. Arquivo retorno_bmg.xlsx gerado.'})
 
-    return jsonify({'mensagem': 'Processado com sucesso.', 'download': f'/download/{os.path.basename(retorno_path)}'})
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
 
-@app.route('/download/<nome_arquivo>')
-def download(nome_arquivo):
-    caminho = os.path.join(UPLOAD_FOLDER, nome_arquivo)
-    if not os.path.exists(caminho):
-        return jsonify({'erro': 'Arquivo não encontrado'}), 404
-    return send_file(caminho, as_attachment=True)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
