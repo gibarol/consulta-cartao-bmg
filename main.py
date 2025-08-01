@@ -1,6 +1,6 @@
+
 from flask import Flask, request, jsonify
-import requests, os, datetime
-import pandas as pd
+import requests, os, pandas as pd
 
 app = Flask(__name__)
 
@@ -17,11 +17,23 @@ def processar_planilha():
     if not arquivo.filename.endswith('.xlsx'):
         return jsonify({"erro": "Formato inválido. Envie um .xlsx"}), 400
 
-    df = pd.read_excel(arquivo)
+    try:
+        df = pd.read_excel(arquivo)
+    except Exception as e:
+        return jsonify({"erro": f"Erro ao ler planilha: {str(e)}"}), 500
+
+    colunas_possiveis = ['cpf', 'CPF', 'Cpf', 'cpf_cliente', 'cpf_cliente_']
+    coluna_cpf = next((col for col in df.columns if col.strip() in colunas_possiveis), None)
+    if not coluna_cpf:
+        return jsonify({"erro": "Coluna de CPF não encontrada"}), 400
+
     resultados = []
 
     for _, row in df.iterrows():
-        cpf = str(row['cpf'])
+        cpf = str(row.get(coluna_cpf)).strip()
+        if not cpf or cpf.lower() == 'nan':
+            continue
+
         resultado = consultar_bmg(cpf)
         resultados.append({"cpf": cpf, **resultado})
 
