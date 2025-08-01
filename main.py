@@ -1,60 +1,59 @@
-
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import requests
-from zeep import Client
-from zeep.transports import Transport
+import datetime
 
 app = Flask(__name__)
 
-@app.route("/")
-def index():
-    return "🟢 API BMG Online via Render – SOAP liberado"
+@app.route('/consulta', methods=['GET'])
+def consultar_bmg():
+    cpf = request.args.get('cpf', '99925125634')  # valor padrão para teste
 
-@app.route("/meuip")
-def meu_ip():
-    ip_response = requests.get("https://httpbin.org/ip")
-    return f"🧪 IP de saída usado pelo Render: {ip_response.text}"
+    # Dados fixos de autenticação
+    login = 'robo.56780'
+    senha = 'Miguel1@@@'
+    codigo_entidade = '1581'
 
-@app.route("/consulta")
-def consulta():
-    cpf = request.args.get("cpf", "")
-    if not cpf:
-        return "❌ CPF não informado", 400
+    # XML de requisição conforme modelo fornecido
+    xml_envio = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:web="http://webservice.econsig.bmg.com">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <web:buscarCartoesDisponiveis>
+      <param>
+        <login>{login}</login>
+        <senha>{senha}</senha>
+        <codigoEntidade>{codigo_entidade}</codigoEntidade>
+        <cpf>{cpf}</cpf>
+        <sequencialOrgao></sequencialOrgao>
+      </param>
+    </web:buscarCartoesDisponiveis>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+
+    headers = {
+        'Content-Type': 'text/xml;charset=UTF-8',
+        'SOAPAction': ''
+    }
+
+    url = 'https://econsig.bmg.com/webservices/econsigws'  # ajustar conforme necessário
 
     try:
-        # Captura o IP atual usado
-        ip_response = requests.get("https://httpbin.org/ip")
-        ip_info = ip_response.json()
+        response = requests.post(url, data=xml_envio.encode('utf-8'), headers=headers)
+        response.raise_for_status()
 
-        # URL do WSDL
-        wsdl_url = "https://ws1.bmgconsig.com.br/webservices/SaqueComplementar?wsdl"
-        transport = Transport(timeout=10)
-        client = Client(wsdl=wsdl_url, transport=transport)
+        # Criar log detalhado
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_text = f"TIMESTAMP: {timestamp}\n\nCPF: {cpf}\n\nXML ENVIADO:\n{xml_envio}\n\nRESPOSTA RECEBIDA:\n{response.text}"
 
-        # Parâmetros de autenticação (substituir se necessário)
-        parametros = {
-            "login": "robo.56780",
-            "senha": "Miguel1@@@",
-            "loginConsig": "",
-            "codigoEntidade": "4277",
-            "cpf": "99925125634",
-            "senhaConsig": "",
-            "sequencialOrgao": 1
-        }
+        with open("log_bmg.txt", "w", encoding="utf-8") as f:
+            f.write(log_text)
 
-        resposta = client.service.buscarCartoesDisponiveis(parametros)
+        return response.text, 200
+    except requests.exceptions.RequestException as e:
+        error_message = f"Erro na requisição: {str(e)}"
+        with open("log_bmg.txt", "w", encoding="utf-8") as f:
+            f.write(error_message)
+        return jsonify({'erro': 'Erro na requisição', 'detalhe': str(e)}), 500
 
-        return (
-            f"<p>✅ Consulta realizada com sucesso!</p>"
-            f"<p>🔎 IP de saída: {ip_info['origin']}</p>"
-            f"<p>📄 Resposta bruta da API BMG:</p>"
-            f"<pre>{resposta}</pre>"
-        )
-    except Exception as e:
-        return (
-            f"<p>❌ Erro na consulta:</p><pre>{str(e)}</pre>"
-            f"<p>🔎 IP usado: {ip_info.get('origin', 'Não identificado')}</p>"
-        ), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+if __name__ == '__main__':
+    app.run()
