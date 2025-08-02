@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: consulta-bmg-api
+    name: consulta-bmg-planilha
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
