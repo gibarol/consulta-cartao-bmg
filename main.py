@@ -2,7 +2,8 @@ import os
 import tempfile
 import pandas as pd
 import httpx
-from flask import Flask, request, send_file, send_from_directory, jsonify
+from flask import Flask, request, send_file
+import zipfile
 
 app = Flask(__name__)
 
@@ -57,9 +58,7 @@ def consulta_planilha():
                     timeout=30.0
                 )
 
-                # Obtem o IP público usado na requisição
                 ip_origem = httpx.get("https://api.ipify.org").text
-
                 content = response.text
 
                 def extrair(tag):
@@ -99,19 +98,19 @@ def consulta_planilha():
                 })
                 logs.append(f"\n----- CPF {cpf} -----\nErro ao consultar: {str(e)}\n")
 
-        # Salvar resultados
+        # Salva a planilha corretamente
         df_saida = pd.DataFrame(resultados)
         output_path = os.path.join(tmpdirname, "resultado_bmg.xlsx")
-        df_saida.to_excel(output_path, index=False)
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            df_saida.to_excel(writer, index=False)
 
-        # Salvar logs detalhados
+        # Salva os logs em .txt
         log_path = os.path.join(tmpdirname, "log_requisicoes.txt")
         with open(log_path, "w", encoding="utf-8") as f:
             f.writelines(logs)
 
-        # Criar .zip com os dois arquivos
-        import zipfile
-        zip_path = os.path.join(tmpdirname, "resposta_completa.zip")
+        # Compacta tudo
+        zip_path = os.path.join(tmpdirname, "resposta_bmg.zip")
         with zipfile.ZipFile(zip_path, "w") as zipf:
             zipf.write(output_path, arcname="resultado_bmg.xlsx")
             zipf.write(log_path, arcname="log_requisicoes.txt")
