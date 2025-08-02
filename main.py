@@ -1,9 +1,8 @@
-
 import os
 import tempfile
 import pandas as pd
 import httpx
-from flask import Flask, request, send_file
+from flask import Flask, request, send_file, send_from_directory, jsonify
 
 app = Flask(__name__)
 
@@ -25,6 +24,7 @@ def consulta_planilha():
             return {"erro": "A planilha deve conter uma coluna chamada 'cpf'"}, 400
 
         resultados = []
+        logs = []
 
         for cpf in df["cpf"]:
             payload = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -57,20 +57,8 @@ def consulta_planilha():
                     timeout=30.0
                 )
 
-                if response.status_code != 200:
-                    resultados.append({
-                        "cpf": cpf,
-                        "status_code": response.status_code,
-                        "erro": f"Erro HTTP {response.status_code}",
-                        "motivo": "",
-                        "liberado": "",
-                        "limite_saque": "",
-                        "limite_total": "",
-                        "limite_credito": "",
-                        "numero_adesao": "",
-                        "numero_cartao": ""
-                    })
-                    continue
+                # Obtem o IP público usado na requisição
+                ip_origem = httpx.get("https://api.ipify.org").text
 
                 content = response.text
 
@@ -83,8 +71,8 @@ def consulta_planilha():
 
                 resultados.append({
                     "cpf": cpf,
-                    "status_code": 200,
-                    "erro": "",
+                    "status_code": response.status_code,
+                    "erro": "" if response.status_code == 200 else f"Erro HTTP {response.status_code}",
                     "motivo": extrair("mensagemImpedimento"),
                     "liberado": extrair("liberado"),
                     "limite_saque": extrair("limite disponivel para saque...:"),
@@ -93,6 +81,8 @@ def consulta_planilha():
                     "numero_adesao": extrair("numeroAdesao"),
                     "numero_cartao": extrair("numeroCartao")
                 })
+
+                logs.append(f"\n----- CPF {cpf} -----\nIP de Origem: {ip_origem}\nStatus: {response.status_code}\nResposta:\n{content}\n")
 
             except Exception as e:
                 resultados.append({
@@ -107,14 +97,23 @@ def consulta_planilha():
                     "numero_adesao": "",
                     "numero_cartao": ""
                 })
+                logs.append(f"\n----- CPF {cpf} -----\nErro ao consultar: {str(e)}\n")
 
+        # Salvar resultados
         df_saida = pd.DataFrame(resultados)
         output_path = os.path.join(tmpdirname, "resultado_bmg.xlsx")
-        df_saida.to_excel(output_path, index=False, engine='openpyxl')
+        df_saida.to_excel(output_path, index=False)
 
-        return send_file(
-            output_path,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name="resposta_bmg.xlsx"
-        )
+        # Salvar logs detalhados
+        log_path = os.path.join(tmpdirname, "log_requisicoes.txt")
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.writelines(logs)
+
+        # Criar .zip com os dois arquivos
+        import zipfile
+        zip_path = os.path.join(tmpdirname, "resposta_completa.zip")
+        with zipfile.ZipFile(zip_path, "w") as zipf:
+            zipf.write(output_path, arcname="resultado_bmg.xlsx")
+            zipf.write(log_path, arcname="log_requisicoes.txt")
+
+        return send_file(zip_path, as_attachment=True, download_name="resposta_bmg.zip")
